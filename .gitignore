@@ -1,0 +1,19 @@
+# macOS cruft
+.DS_Store
+
+# Secrets
+.env
+
+# Exported questions & images
+/data/images/
+/data/questions/
+
+# Generated outputs & runs
+runs/
+*.json
+*.zip
+
+# Virtual‐envs & caches
+venv/
+__pycache__/
+*.py[cod]
