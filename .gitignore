@@ -11,6 +11,7 @@
 # Generated outputs & runs
 runs/
 *.json
+*.parquet
 *.zip
 
 # Virtual‐envs & caches
