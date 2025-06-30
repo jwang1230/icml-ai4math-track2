@@ -1,142 +1,88 @@
+#!/usr/bin/env python3
+"""
+call_road2all.py – simple API‐caller for JSONL prompts
+
+Reads lines like:
+  {"index":…, "prompt":"…", "image_path":["…"]}
+
+and writes out:
+  {"input":{…}, "output":{…API response…}}
+
+Usage:
+  python3 call_road2all.py \
+    --input  vision_input.jsonl \
+    --output vision_output.jsonl \
+    --model  gpt-4o-mini \
+    [--temperature 0.0] [--max_tokens 8192] [--threads 8]
+"""
+
 import os
-import requests
-import concurrent.futures
-import time
-from tqdm import tqdm
 import json
-import argparse
+import time
 import base64
+import argparse
+import requests
+from concurrent.futures import ThreadPoolExecutor
+from tqdm import tqdm
 
-# Please contact Congkai/Zhijie to get the API key
-api_key = os.getenv("ROAD2ALL_API_KEY")
+API_URL = "https://api.road2all.com/v1/chat/completions"
+API_KEY = os.getenv("ROAD2ALL_API_KEY")
+if not API_KEY:
+    raise RuntimeError("Missing ROAD2ALL_API_KEY environment variable")
 
-if not api_key:
-    raise ValueError("Missing API key. Please set the ROAD2ALL_API_KEY environment variable.")
-
-url = "https://api.road2all.com/v1/chat/completions"
-headers = {
-    "Authorization": f"Bearer {api_key}",
+HEADERS = {
+    "Authorization": f"Bearer {API_KEY}",
     "Content-Type": "application/json"
 }
 
-def encode_image(image_path):
-    with open(image_path, "rb") as image_file:
-        return base64.b64encode(image_file.read()).decode("utf-8")
+def encode_image(path: str) -> str:
+    """Load image file and return a base64 data URI."""
+    if not os.path.exists(path):
+        alt = os.path.join("data", path)
+        if os.path.exists(alt):
+            path = alt
+    with open(path, "rb") as f:
+        b64 = base64.b64encode(f.read()).decode("utf-8")
+    return f"data:image/png;base64,{b64}"
 
-def call_road2all(model_name, text, params: dict = None, timeout: int = 300, max_retries=3):
-    text_dict = json.loads(text)
-    prompt = text_dict["prompt"]
-    if "images" in text_dict:
-        content = [{ "type": "text", "text": prompt }]
-        image_path_list = text_dict["images"]
-        for image_path in image_path_list:
-            content.append({
-                "type": "image_url",
-                "image_url": {
-                    "url": f"data:image/jpeg;base64,{encode_image(image_path)}",
-                }
-            })
-    else:
-        content = prompt
-    data = {
-        "model": model_name,
+def call_api(record: dict, model: str, params: dict, timeout: int, retries: int):
+    """Call the Chat Completions API once for this record."""
+    # build the content array: text + any images
+    content = [{"type": "text", "text": record["prompt"]}]
+    for img_path in record.get("image_path", []):
+        content.append({
+            "type": "image_url",
+            "image_url": {"url": encode_image(img_path)}
+        })
+
+    payload = {
+        "model": model,
         "messages": [{"role": "user", "content": content}],
-        **(params if params else {})
+        **params
     }
-    retries = 0
-    while retries < max_retries:
+
+    for attempt in range(1, retries+1):
         try:
-            response = requests.post(url, headers=headers, json=data, timeout=timeout)
-            response.raise_for_status()
-            return response.json()
-        except requests.exceptions.RequestException as e:
-            print(f"Request failed (attempt {retries + 1}): {e}. Retrying...")
-            retries += 1
-            time.sleep(3)
-    print(f"Failed to get a valid response after {max_retries} attempts.")
-    return None
+            resp = requests.post(API_URL, headers=HEADERS, json=payload, timeout=timeout)
+            resp.raise_for_status()
+            return resp.json()
+        except Exception as e:
+            if attempt == retries:
+                print(f"[error] API call failed after {retries} tries: {e}")
+                return None
+            time.sleep(1)
 
-
-def batch_call_road2all(model_name, texts, output_file, params: dict = None, timeout: int = 300, max_threads=8):
-    successful_requests = 0
-    failed_requests = 0
-    start_time = time.time()
-    total_requests = len(texts)
-    with concurrent.futures.ThreadPoolExecutor(max_workers=max_threads) as executor:
-        futures = {executor.submit(call_road2all, model_name, text, params, timeout): text for text in texts}
-
-        with tqdm(total=total_requests, desc="Processing API Requests", dynamic_ncols=True) as pbar:
-            for future in concurrent.futures.as_completed(futures):
-                input_text = futures[future]
-                result = future.result()
-
-                combined_result = {
-                    "input": input_text,
-                    "output": result
-                }
-
-                if result is not None:
-                    successful_requests += 1
-                else:
-                    failed_requests += 1
-
-                elapsed_time = time.time() - start_time
-                requests_per_second = (successful_requests + failed_requests) / elapsed_time if elapsed_time > 0 else 0
-                success_rate = (successful_requests / (successful_requests + failed_requests)) * 100 if (successful_requests + failed_requests) > 0 else 0
-
-                pbar.update(1)
-                pbar.set_postfix({
-                    "Success": successful_requests,
-                    "Failed": failed_requests,
-                    "Req/sec": f"{requests_per_second:.2f}",
-                    "Success Rate": f"{success_rate:.2f}%"
-                })
-
-                if result is not None:
-                    with open(output_file, 'a', encoding='utf-8') as f:
-                        f.write(json.dumps(combined_result, ensure_ascii=False) + '\n')
-
-
-def read_prompts_from_jsonl(file_path):
-    prompts = []
-    with open(file_path, 'r', encoding='utf-8') as f:
-        for line in f:
-            try:
-                data = json.loads(line)
-                # if 'prompt' in data:
-                #     prompts.append(data['prompt'])
-                prompts.append(line.strip())
-            except json.JSONDecodeError:
-                print(f"Error decoding JSON line: {line}")
-    return prompts
-
-
-def get_processed_prompts(output_file):
-    processed_prompts = set()
-    if os.path.exists(output_file):
-        with open(output_file, 'r', encoding='utf-8') as f:
-            for line in f:
-                try:
-                    data = json.loads(line)
-                    if 'input' in data:
-                        processed_prompts.add(data['input'])
-                except json.JSONDecodeError:
-                    print(f"Error decoding JSON line in output file: {line}")
-    return processed_prompts
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Batch API requests with retry and skip processed prompts.')
-    parser.add_argument('--input_file', type=str, default="input.jsonl", help='Path to the input JSONL file.')
-    parser.add_argument('--output_file', type=str, default="results.jsonl", help='Path to the output JSONL file.')
-    # parser.add_argument('--model_name', type=str, default="deepseek-r1", help='Name of the model to use.')
-    parser.add_argument('--model_name', type=str, default="gpt-4.1", help='Name of the model to use.')
-    parser.add_argument('--temperature', type=float, default=0.6, help='Temperature parameter for the API request.')
-    parser.add_argument('--max_tokens', type=int, default=8192, help='Maximum number of tokens for the API request.')
-    parser.add_argument('--timeout', type=int, default=300, help='Timeout for the API request in seconds.')
-    parser.add_argument('--max_threads', type=int, default=12, help='Maximum number of threads for concurrent requests.')
-
-    args = parser.parse_args()
+def main():
+    p = argparse.ArgumentParser(description="Batch API caller for Road2All")
+    p.add_argument("--input",      required=True, help="Input JSONL of prompts")
+    p.add_argument("--output",     required=True, help="Output JSONL of results")
+    p.add_argument("--model",      required=True, help="Model name (e.g. gpt-4o-mini or o4-mini)")
+    p.add_argument("--temperature",type=float, default=0.0)
+    p.add_argument("--max_tokens", type=int,   default=512)
+    p.add_argument("--timeout",    type=int,   default=300)
+    p.add_argument("--retries",    type=int,   default=3)
+    p.add_argument("--threads",    type=int,   default=8)
+    args = p.parse_args()
 
     params = {
         "stream": False,
@@ -144,15 +90,26 @@ if __name__ == "__main__":
         "max_tokens": args.max_tokens
     }
 
-    all_prompts = read_prompts_from_jsonl(args.input_file)
+    # read all input records
+    with open(args.input, "r", encoding="utf-8") as f:
+        records = [json.loads(line) for line in f if line.strip()]
 
-    processed_prompts = get_processed_prompts(args.output_file)
+    # dispatch in parallel
+    with ThreadPoolExecutor(max_workers=args.threads) as exe, \
+         open(args.output, "w", encoding="utf-8") as fout, \
+         tqdm(total=len(records), desc="API requests") as bar:
 
-    unprocessed_prompts = [prompt for prompt in all_prompts if prompt not in processed_prompts]
+        futures = {
+            exe.submit(call_api, rec, args.model, params, args.timeout, args.retries): rec
+            for rec in records
+        }
 
-    if unprocessed_prompts:
-        batch_call_road2all(args.model_name, unprocessed_prompts, args.output_file,
-                            params, timeout=args.timeout, max_threads=args.max_threads)
-    else:
-        print("All prompts have already been processed.")
+        for fut in futures:
+            rec  = futures[fut]
+            resp = fut.result()
+            out  = {"input": rec, "output": resp}
+            fout.write(json.dumps(out, ensure_ascii=False) + "\n")
+            bar.update()
 
+if __name__ == "__main__":
+    main()
