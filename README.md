@@ -1,103 +1,67 @@
-# ICML AI4Math Track-2 Pipeline
+# icml-ai4math-track2
 
-This repository contains a complete end-to-end pipeline for the SeePhys AI4Math Track-2 challenge, including data preparation, prompt construction, inference, answer extraction, and evaluation.
+A pipeline for evaluating multimodal LLMs on physics diagram questions (ICML AI4Math Track 2).
 
-## Project Structure
+## Installation
 
-```
-icml-ai4math-track2/
-├─ data/                 # Original dev/test JSON and images
-│  ├─ dev.json
-│  └─ images/
-│      └─ *.png
-│
-├─ scripts/              # Python scripts for each stage
-│  ├─ prepare_input.py   # Build JSONL prompts
-│  ├─ call_road2all.py   # Invoke the API for inference
-│  ├─ extract_answer.py  # Parse model outputs into prediction.json
-│  ├─ evaluate.py        # Dev-set evaluator with sig-fig logic
-│  └─ build_submission.py# Merge predictions into submission format
-│
-├─ runs/                 # Experiment outputs (organized by date/model)
-│  └─ YYYY-MM-DD_model/
-│      ├─ input.jsonl
-│      ├─ output.jsonl
-│      ├─ prediction.json
-│      └─ metrics.txt
-│
-├─ notebooks/            # Exploratory analysis (optional)
-├─ .env                  # Local API keys (ignored)
-├─ .gitignore            # Ignore rules
-├─ requirements.txt      # Python dependencies
-└─ README.md             # This file
-```
-
-## Setup
-
-1. Create and activate a virtual environment:
-
+1. **Clone the repository**  
+   ```bash
+   git clone https://github.com/yourusername/icml-ai4math-track2.git
+   cd icml-ai4math-track2
+   ```
+2. **Create & activate a virtual environment**  
    ```bash
    python3 -m venv venv
    source venv/bin/activate
    ```
-2. Install dependencies:
-
+3. **Install dependencies**  
    ```bash
    pip install -r requirements.txt
    ```
-3. Copy `.env.example` to `.env` and fill in your API keys.
 
 ## Usage
 
-### 1. Prepare Prompts
-
+Run the end-to-end pipeline on the full dev set:
 ```bash
-python3 scripts/prepare_input.py data/dev.json runs/<tag>/input.jsonl
+python3 main.py --dev data/dev.json
+```
+Or sample _N_ items for quick testing:
+```bash
+python3 main.py --dev data/dev.json --sample 10 --seed 1234
 ```
 
-### 2. Run Inference
+By default this will:
+1. (Optional) sample the dev set  
+2. Generate vision-stage prompts  
+3. Call the vision model (e.g. `gpt-4o-mini`)  
+4. Merge vision results with questions  
+5. Call the solve model (e.g. `o4-mini`)  
+6. Extract predictions  
+7. Evaluate against ground-truth  
+
+### Additional flags
 
 ```bash
-python3 scripts/call_road2all.py \
-    --input_file runs/<tag>/input.jsonl \
-    --output_file runs/<tag>/output.jsonl \
-    --model_name o4-mini --temperature 0.2
+# Model choices:
+--vision_model  gpt-4o-mini
+--solve_model   o4-mini
+
+# Temperatures:
+--vision_temp   0.0
+--solve_temp    0.1
+
+# Parallelism:
+--threads       8
 ```
 
-### 3. Extract Answers
+## Project Structure
 
-```bash
-python3 scripts/extract_answer.py \
-    runs/<tag>/output.jsonl \
-    runs/<tag>/prediction.json \
-    --dev data/dev.json
 ```
-
-### 4. Evaluate Predictions
-
-```bash
-python3 scripts/evaluate.py \
-    runs/<tag>/prediction.json data/dev.json \
-    --rtol 0.01 --atol 0.001 | tee runs/<tag>/metrics.txt
+.
+├── data/                # dev.json, images, etc.
+├── scripts/             # prepare_* and helper scripts
+├── runs/                # auto-generated outputs
+├── main.py              # orchestrates the full pipeline
+├── requirements.txt
+└── README.md
 ```
-
-### 5. Build Submission
-
-```bash
-python3 scripts/build_submission.py \
-    data/dev.json runs/<tag>/prediction.json submission.json
-```
-
-## Experiment Management
-
-* Store each run under `runs/<date_model>/`.
-* Use `gitignore` to skip large outputs and secrets.
-
-## Contributing
-
-Feel free to open issues or pull requests for improvements.
-
----
-
-Good luck with the AI4Math Track-2 challenge!
-
