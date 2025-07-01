@@ -11,7 +11,7 @@ Usage:
 import argparse
 import json
 from pathlib import Path
-from string import Template
+# --- REMOVED: from string import Template ---
 
 
 def load_jsonl(path):
@@ -36,45 +36,46 @@ def extract_vision_details(txt):
             bullets.append(line)
     return bullets
 
-
-EN_TEMPLATE = Template(r"""
-$question
+# --- MODIFIED TEMPLATE to use .format() syntax ---
+EN_TEMPLATE = r"""
+{question}
 
 Diagram details (vision):
-$details
+{details}
 
 Please solve this step-by-step:
 1. Put your full reasoning inside <think>…</think>.
-2. Include a <self-check> that prints each intermediate value (with units).
+2. In <self-check>, verify that you have used all relevant numerical values from the 'Diagram details' section. Explicitly list the key values used and double-check your algebraic steps and final calculation.
 3. Finally, in <answer>…</answer> output **either**:
    – A single number rounded to the **same** number of significant figures as in the GT  
      (no units inside the number), e.g.: `<answer>$$-6.50$$</answer>`  
    – OR a full symbolic result in LaTeX display math if the answer is an expression, e.g.:  
-     `<answer>$$$$\Delta V = \frac{(\beta_2-\beta_1)(T_2 - T_1)V_1V_2}{(1+\beta_1)T_2V_1 + (1+\beta_2)T_1V_2}$$$$</answer>`
-4. If the result has a physical unit, append it inside `\,\mathrm{…}` in the math delimiters.
+     `<answer>$$$$\Delta V = \frac{{(\beta_2-\beta_1)(T_2 - T_1)V_1V_2}}{{(1+\beta_1)T_2V_1 + (1+\beta_2)T_1V_2}}$$$$</answer>`
+4. If the result has a physical unit, append it inside `\,\mathrm{{…}}` in the math delimiters.
 5. Do **not** add any text outside these tags.
 
-Round the numeric part to ${sig_figs} significant figure(s).
-""".lstrip())
+Round the numeric part to {sig_figs} significant figure(s).
+""".lstrip()
 
-CN_TEMPLATE = Template(r"""
-$question
+# --- MODIFIED TEMPLATE to use .format() syntax ---
+CN_TEMPLATE = r"""
+{question}
 
 图像要点（视觉阶段输出）:
-$details
+{details}
 
 请按以下格式作答：
 1. 将全部推理放在 `<think>…</think>` 标签中。
-2. 在 `<self-check>` 中打印每个中间数值（含单位）。
+2. 在 <self-check> 中，确认你已使用了“图像要点”中所有相关的数值。明确列出所用的关键数值，并仔细检查你的代数步骤和最终计算。
 3. 最后在 `<answer>…</answer>` 中 **仅输出**：
-   – 与 GT 同位数的单个数字（不含单位），如：`<answer>$$-6.50$$</answer>`  
+   – 与 GT 同位数的单个数字（不含单位），如：`<answer>$$-6.50$</answer>`  
    – 或当答案是表达式时，用 LaTeX 行间公式， 如：  
-     `<answer>$$$$\Delta V = \frac{(\beta_2-\beta_1)(T_2 - T_1)V_1V_2}{(1+\beta_1)T_2V_1 + (1+\beta_2)T_1V_2}$$$$</answer>`
-4. 如果有物理单位，将其附加在 `\,\mathrm{…}` 中。
+     `<answer>$$$$\Delta V = \frac{{(\beta_2-\beta_1)(T_2 - T_1)V_1V_2}}{{(1+\beta_1)T_2V_1 + (1+\beta_2)T_1V_2}}$$$$</answer>`
+4. 如果有物理单位，将其附加在 `\,\mathrm{{…}}` 中。
 5. 不要在这些标签之外添加任何文字。
 
-数值保留 ${sig_figs} 位有效数字。
-""".lstrip())
+数值保留 {sig_figs} 位有效数字。
+""".lstrip()
 
 
 def main():
@@ -104,7 +105,7 @@ def main():
         content = ""
         try:
             content = out["choices"][0]["message"]["content"]
-        except Exception:
+        except (KeyError, IndexError, TypeError):
             pass
         vision_map[int(idx)] = content
 
@@ -122,7 +123,9 @@ def main():
             details  = "\n".join(bullets) if bullets else "(no vision details found)"
 
             tpl = EN_TEMPLATE if lang.startswith("english") else CN_TEMPLATE
-            prompt = tpl.substitute(
+            
+            # --- MODIFIED from .substitute() to .format() ---
+            prompt = tpl.format(
                 question=question,
                 details=details,
                 sig_figs=sig_figs
